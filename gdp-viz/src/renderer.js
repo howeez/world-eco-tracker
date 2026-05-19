@@ -1,9 +1,9 @@
 /**
  * renderer.js
- * Voronoi Treemap — two-level navigation:
+ * Voronoi Treemap chart — two-level navigation:
  *   World view     → click any cell → enter that continent's treemap
- *   Continent view → click a cell  → show country detail panel
- *   Back button / bg click → return to world view
+ *   Continent view → click a cell   → fires onCountryClick callback
+ *   Back button / bg click          → return to world view
  *
  * Labels are zoom-adaptive: small cells gain labels once they're large enough on screen.
  */
@@ -57,7 +57,6 @@ export class BubbleRenderer {
       .attr("viewBox", `0 0 ${VB_W} ${VB_H}`)
       .attr("preserveAspectRatio", "xMidYMid meet");
 
-    // Clip to the master circle — no ghost ring, just a hard edge
     this.svg.append("defs")
       .append("clipPath").attr("id", "outer-clip")
       .append("circle").attr("cx", CX).attr("cy", CY).attr("r", RADIUS);
@@ -93,9 +92,7 @@ export class BubbleRenderer {
 
     this.onComputeStart();
     await new Promise(r => setTimeout(r, 50));
-
     makeVT()(root);
-
     this._worldRoot = root;
     this.onComputeEnd();
 
@@ -106,17 +103,9 @@ export class BubbleRenderer {
     setTimeout(() => this._precompute(), 300);
   }
 
-  /** Called from legend chip click. */
-  zoomToContinent(name) {
-    this._enterContinent(name);
-  }
-
-  /** Called from back button. */
-  resetToWorld() {
-    this._enterWorld();
-  }
-
-  resize() { /* CSS aspect-ratio handles scaling */ }
+  zoomToContinent(name) { this._enterContinent(name); }
+  resetToWorld()        { this._enterWorld(); }
+  resize()              { /* CSS aspect-ratio handles scaling */ }
 
   // ─── View transitions ────────────────────────────────────────────────────────
 
@@ -126,11 +115,9 @@ export class BubbleRenderer {
     if (!root) {
       const node = this._worldRoot?.children?.find(c => c.data.name === name);
       if (!node) return;
-
       root = d3.hierarchy({ name: node.data.name, color: node.data.color, children: node.data.children })
         .sum(d => d.gdp ?? 0)
         .sort((a, b) => b.value - a.value);
-
       makeVT()(root);
       this._contCache.set(name, root);
     }
@@ -149,16 +136,13 @@ export class BubbleRenderer {
     this.onZoomOut();
   }
 
-  /** Silently pre-compute all continent treemaps after initial render. */
   async _precompute() {
     for (const c of (this._worldRoot?.children ?? [])) {
       if (this._contCache.has(c.data.name)) continue;
-      await new Promise(r => setTimeout(r, 0));  // yield to browser between each
-
+      await new Promise(r => setTimeout(r, 0));
       const root = d3.hierarchy({ name: c.data.name, color: c.data.color, children: c.data.children })
         .sum(d => d.gdp ?? 0)
         .sort((a, b) => b.value - a.value);
-
       makeVT()(root);
       this._contCache.set(c.data.name, root);
     }
@@ -172,12 +156,10 @@ export class BubbleRenderer {
     const isWorld = viewType === "world";
     const leaves  = root.leaves();
 
-    // Dark background fill for the circle
     this.g.append("circle")
       .attr("cx", CX).attr("cy", CY).attr("r", RADIUS + 2)
       .attr("fill", "#0a0c14");
 
-    // ── Country cells ──────────────────────────────────────────────────────────
     this.g.append("g").attr("class", "countries")
       .selectAll("path")
       .data(leaves)
@@ -215,7 +197,6 @@ export class BubbleRenderer {
         }
       });
 
-    // ── Continent outlines (world view only) ───────────────────────────────────
     if (isWorld) {
       this.g.append("g").attr("class", "cont-outlines")
         .attr("pointer-events", "none")
@@ -229,20 +210,19 @@ export class BubbleRenderer {
         .attr("stroke-linejoin", "round");
     }
 
-    // ── Labels ─────────────────────────────────────────────────────────────────
     const labelG = this.g.append("g").attr("class", "labels").attr("pointer-events", "none");
 
     leaves.forEach(d => {
       if (!d.polygon) return;
       const area = Math.abs(d3.polygonArea(d.polygon));
-      if (area < (isWorld ? 400 : 120)) return;   // skip cells too tiny to ever label
+      if (area < (isWorld ? 400 : 120)) return;
 
-      const [lx, ly]  = d3.polygonCentroid(d.polygon);
-      const fs        = isWorld
+      const [lx, ly] = d3.polygonCentroid(d.polygon);
+      const fs       = isWorld
         ? Math.min(Math.max(Math.sqrt(area) * 0.062, 6.5), 15)
         : Math.min(Math.max(Math.sqrt(area) * 0.065, 7.5), 18);
-      const showGDP   = area > (isWorld ? 5500 : 2500);
-      const initOp    = area >= LABEL_SHOW_AREA ? 1 : 0;
+      const showGDP  = area > (isWorld ? 5500 : 2500);
+      const initOp   = area >= LABEL_SHOW_AREA ? 1 : 0;
 
       const cell = labelG.append("g")
         .attr("class", "cell-label")
@@ -283,7 +263,6 @@ export class BubbleRenderer {
 
     this.svg.call(this._zoom).on("dblclick.zoom", null);
 
-    // Clicking the bare SVG background (outside the circle) resets to world
     let _downPos = null;
     this.svg
       .on("pointerdown.bgNav", e => {
@@ -299,11 +278,9 @@ export class BubbleRenderer {
       });
   }
 
-  /** Show/hide labels based on apparent size after zoom. */
   _updateLabels(k) {
     this.g.selectAll(".cell-label").style("opacity", function() {
       const area = +(this.getAttribute("data-area") ?? 0);
-      // Apparent area scales as k² — show once it clears the threshold
       return area * k * k >= LABEL_SHOW_AREA ? 1 : 0;
     });
   }
@@ -338,114 +315,7 @@ export class BubbleRenderer {
   }
 }
 
-// ── Detail Panel ──────────────────────────────────────────────────────────────
-
-export function renderDetailPanel(panel, country, detail) {
-  const { name, iso2, gdp, continent, color } = country;
-
-  const flag      = flagEmoji(iso2);
-  const sectors   = detail ? buildSectorBars(detail.agriculture, detail.industry, detail.services) : null;
-  const growth    = detail?.gdpGrowth;
-  const growthStr = growth != null ? `${growth > 0 ? "+" : ""}${growth.toFixed(2)}%` : "N/A";
-  const growthClr = growth == null ? "#888" : growth >= 0 ? "#10b981" : "#ef4444";
-  const arrow     = growth == null ? "" : growth >= 0 ? "▲ " : "▼ ";
-  const sparkSvg  = detail?.history?.length > 1 ? buildSparkline(detail.history, color) : "";
-
-  panel.querySelector("#detail-content").innerHTML = `
-    <div class="detail-flag">${flag}</div>
-    <h2 class="detail-name">${name}</h2>
-    <div class="detail-continent" style="color:${color}">${continent}</div>
-
-    <div class="detail-stats">
-      <div class="stat-block">
-        <div class="stat-label">Total GDP</div>
-        <div class="stat-value">${formatTrillions(gdp)}</div>
-        <div class="stat-sub">constant 2015 USD</div>
-      </div>
-      <div class="stat-block">
-        <div class="stat-label">GDP Growth</div>
-        <div class="stat-value" style="color:${growthClr}">${arrow}${growthStr}</div>
-        <div class="stat-sub">${detail?.gdpGrowthYear ?? "latest year"}</div>
-      </div>
-      <div class="stat-block">
-        <div class="stat-label">GDP per Capita</div>
-        <div class="stat-value">${detail?.gdpPerCapita != null ? formatTrillions(detail.gdpPerCapita) : "N/A"}</div>
-        <div class="stat-sub">constant 2015 USD</div>
-      </div>
-      <div class="stat-block">
-        <div class="stat-label">Population</div>
-        <div class="stat-value">${detail?.population != null ? fmtPop(detail.population) : "N/A"}</div>
-        <div class="stat-sub">${detail?.populationYear ?? ""}</div>
-      </div>
-    </div>
-
-    ${sectors ? `
-    <div class="detail-section">
-      <div class="section-title">GDP by Sector</div>
-      <div class="sector-bars">
-        ${sectors.map(s => `
-          <div class="sector-row">
-            <div class="sector-name">${s.name}</div>
-            <div class="sector-track">
-              <div class="sector-fill" style="width:${s.pct.toFixed(1)}%;background:${s.color}"></div>
-            </div>
-            <div class="sector-pct">${s.pct.toFixed(1)}%</div>
-          </div>`).join("")}
-      </div>
-    </div>` : detail === null
-      ? `<div class="detail-loading"><div class="mini-spinner"></div><span>Loading breakdown…</span></div>`
-      : `<div class="detail-na">Sector data unavailable</div>`}
-
-    ${sparkSvg ? `
-    <div class="detail-section">
-      <div class="section-title">GDP History</div>
-      <div class="sparkline-wrap">${sparkSvg}</div>
-    </div>` : ""}
-
-    <div class="detail-source">
-      World Bank · NY.GDP.MKTP.KD (constant 2015 USD)
-    </div>`;
-}
-
-function buildSectorBars(agr, ind, srv) {
-  if (agr == null || ind == null || srv == null) return null;
-  const tot = agr + ind + srv;
-  if (tot <= 0) return null;
-  return [
-    { name: "Agriculture", pct: (agr / tot) * 100, color: "#10b981" },
-    { name: "Industry",    pct: (ind / tot) * 100, color: "#6366f1" },
-    { name: "Services",    pct: (srv / tot) * 100, color: "#f59e0b" },
-  ];
-}
-
-function buildSparkline(history, color) {
-  const W = 260, H = 56;
-  const vals  = history.map(d => d.value);
-  const years = history.map(d => +d.date);
-  const minV  = Math.min(...vals), maxV = Math.max(...vals);
-  const xS    = i => (i / (vals.length - 1)) * W;
-  const yS    = v => H - ((v - minV) / (maxV - minV || 1)) * H;
-  const pts   = vals.map((v, i) => `${xS(i)},${yS(v)}`).join(" ");
-  return `<svg class="sparkline-svg" viewBox="0 0 ${W} ${H + 14}" width="${W}" height="${H + 14}">
-    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>
-    <circle cx="${xS(vals.length - 1)}" cy="${yS(vals[vals.length - 1])}" r="3" fill="${color}"/>
-    <text x="0"   y="${H + 12}" font-size="9" fill="#666">${years[0]}</text>
-    <text x="${W}" y="${H + 12}" font-size="9" fill="#666" text-anchor="end">${years[years.length - 1]}</text>
-  </svg>`;
-}
-
-function fmtPop(n) {
-  if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
-  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
-  return `${(n / 1e3).toFixed(0)}K`;
-}
-
-function flagEmoji(iso2) {
-  if (!iso2 || iso2.length !== 2) return "🌐";
-  const base = 0x1F1E6, code = iso2.toUpperCase();
-  return String.fromCodePoint(base + code.charCodeAt(0) - 65) +
-         String.fromCodePoint(base + code.charCodeAt(1) - 65);
-}
+// ── Legend ────────────────────────────────────────────────────────────────────
 
 export function renderLegend(container, continents, worldTotal, year) {
   container.innerHTML = "";

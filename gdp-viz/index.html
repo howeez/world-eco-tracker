@@ -15,10 +15,25 @@
         <p class="subtitle" id="subtitle">Loading data from World Bank…</p>
       </header>
 
-      <!-- Continent legend chips + back button -->
+      <!-- Continent legend chips + back button + country search -->
       <div id="controls">
         <button id="back-btn" class="hidden">← World View</button>
         <div id="legend-bar"></div>
+        <div id="search-wrap">
+          <input
+            id="country-input"
+            type="text"
+            placeholder="Search country…"
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="Search for a country"
+            aria-autocomplete="list"
+            aria-controls="search-dropdown"
+            role="combobox"
+            aria-expanded="false"
+          />
+          <ul id="search-dropdown" class="hidden" role="listbox" aria-label="Country suggestions"></ul>
+        </div>
       </div>
     </div>
 

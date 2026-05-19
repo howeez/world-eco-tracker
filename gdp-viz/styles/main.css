@@ -19,6 +19,7 @@
 
 html, body {
   height: 100%;
+  overflow: hidden;
   background: var(--bg);
   color: var(--ink);
   font-family: 'Crimson Pro', Georgia, serif;
@@ -29,9 +30,10 @@ html, body {
 #app {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
-  padding: 1.5rem 1.25rem 2rem;
-  gap: 1rem;
+  height: 100vh;
+  padding: 0.75rem 1.25rem 1rem;
+  gap: 0.5rem;
+  overflow: hidden;
 }
 
 /* ─── Sticky top bar ─────────────────────────────────────────────────────── */
@@ -40,7 +42,7 @@ html, body {
   top: 0;
   z-index: 100;
   background: var(--bg);
-  padding-bottom: 0.5rem;
+  padding-bottom: 0.25rem;
 }
 
 /* ─── Header ─────────────────────────────────────────────────────────────── */
@@ -50,7 +52,7 @@ header {
 
 header h1 {
   font-family: 'Playfair Display', Georgia, serif;
-  font-size: clamp(1.4rem, 3.5vw, 2.4rem);
+  font-size: clamp(1rem, 2vw, 1.4rem);
   font-weight: 900;
   letter-spacing: -0.02em;
   color: var(--ink);
@@ -58,9 +60,9 @@ header h1 {
 }
 
 header .subtitle {
-  font-size: 0.9rem;
+  font-size: 0.75rem;
   color: var(--ink-soft);
-  margin-top: 0.35rem;
+  margin-top: 0.15rem;
   font-style: italic;
 }
 
@@ -145,6 +147,71 @@ header .subtitle {
   font-family: 'Playfair Display', serif;
   font-size: 0.95rem;
   color: var(--ink);
+}
+
+/* ─── Country search ──────────────────────────────────────────────────────── */
+#search-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+#country-input {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  color: var(--ink);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.72rem;
+  padding: 0.38rem 0.9rem;
+  width: 180px;
+  outline: none;
+  transition: border-color 0.15s, background 0.15s, width 0.2s;
+}
+
+#country-input::placeholder { color: var(--ink-faint); }
+
+#country-input:focus {
+  border-color: rgba(99,102,241,0.55);
+  background: rgba(255,255,255,0.09);
+  width: 220px;
+}
+
+#search-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  list-style: none;
+  padding: 0.3rem 0;
+  min-width: 230px;
+  z-index: 300;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.55);
+}
+
+#search-dropdown.hidden { display: none; }
+
+.search-item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.45rem 0.85rem;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.search-item:hover,
+.search-item.active { background: rgba(255,255,255,0.07); }
+
+.si-flag { font-size: 1.1rem; line-height: 1; }
+.si-name { flex: 1; font-size: 0.88rem; color: var(--ink); }
+.si-continent {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.59rem;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 /* ─── Main view ───────────────────────────────────────────────────────────── */
@@ -350,6 +417,127 @@ header .subtitle {
   grid-template-columns: 80px 1fr 44px;
   align-items: center;
   gap: 0.5rem;
+  cursor: pointer;
+  border-radius: 5px;
+  transition: background 0.12s;
+}
+
+.sector-row:hover {
+  background: rgba(255,255,255,0.04);
+}
+
+.sector-chevron {
+  font-size: 0.6rem;
+  opacity: 0.4;
+  display: inline-block;
+  transition: transform 0.18s;
+  vertical-align: middle;
+}
+
+.sector-row.expanded .sector-chevron {
+  transform: rotate(90deg);
+  opacity: 0.7;
+}
+
+.section-hint {
+  font-weight: normal;
+  opacity: 0.45;
+  font-size: 0.58rem;
+  font-family: 'DM Mono', monospace;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* Sector expansion panel */
+.sector-expand {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  margin: 0.2rem 0 0.4rem;
+  animation: expandIn 0.15s ease;
+}
+
+@keyframes expandIn {
+  from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.sub-section {
+  padding: 0.6rem 0.7rem;
+}
+
+.sub-title {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.59rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  margin-bottom: 0.45rem;
+}
+
+.sub-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.38rem;
+  margin-bottom: 0.45rem;
+}
+
+.sub-bar-row {
+  display: grid;
+  grid-template-columns: 95px 1fr 38px;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.sub-bar-name {
+  font-size: 0.7rem;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sub-bar-track {
+  height: 6px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.sub-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s ease;
+}
+
+.sub-bar-pct {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.62rem;
+  color: var(--ink-soft);
+  text-align: right;
+}
+
+.sub-stat {
+  font-size: 0.74rem;
+  color: var(--ink-soft);
+  margin-bottom: 0.28rem;
+  line-height: 1.4;
+}
+
+.sub-note {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.55rem;
+  color: var(--ink-faint);
+  margin-top: 0.4rem;
+  line-height: 1.5;
+}
+
+.sub-note-muted {
+  font-size: 0.68rem;
+  color: var(--ink-faint);
+  font-style: italic;
+  margin-bottom: 0.2rem;
+  line-height: 1.4;
 }
 
 .sector-name {
@@ -379,7 +567,7 @@ header .subtitle {
 }
 
 /* Sparkline */
-.sparkline-wrap { overflow: hidden; }
+.sparkline-wrap { overflow: visible; }
 
 .sparkline-svg {
   display: block;
@@ -422,6 +610,40 @@ header .subtitle {
   line-height: 1.6;
   border-top: 1px solid var(--border);
   padding-top: 0.75rem;
+}
+
+/* ─── Trade section ──────────────────────────────────────────────────────── */
+.trade-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.trade-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.82rem;
+}
+
+.trade-balance-row {
+  border-top: 1px solid var(--border);
+  padding-top: 0.3rem;
+  margin-top: 0.1rem;
+}
+
+.trade-label {
+  color: var(--ink-soft);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.72rem;
+}
+
+.trade-value {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--ink);
 }
 
 /* ─── Tooltip ─────────────────────────────────────────────────────────────── */

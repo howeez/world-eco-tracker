@@ -8,8 +8,13 @@
  *   "detail"    — country detail panel open (can coexist with either above)
  */
 
-import { fetchWorldGDP, fetchCountryDetail } from "./worldbank.js";
-import { BubbleRenderer, renderDetailPanel, renderLegend } from "./renderer.js";
+import {
+  fetchWorldGDP, fetchCountryCore, fetchCountrySupp,
+  getCachedCountryDetail, setCachedCountryDetail,
+  fetchTradePartners, flagEmoji,
+} from "./worldbank.js";
+import { BubbleRenderer, renderLegend } from "./renderer.js";
+import { renderDetailPanel } from "./panel.js";
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 
@@ -40,19 +45,37 @@ function hideStatus() {
 
 // ─── Detail panel ─────────────────────────────────────────────────────────────
 
-async function openDetail(countryData) {
-  detailPanel.classList.add("open");
-  // Render immediately with loading state for the breakdown
-  renderDetailPanel(detailPanel, countryData, null);
+let _openIso3 = null;
 
-  try {
-    const detail = await fetchCountryDetail(countryData.iso3);
-    // Re-render with full data
-    renderDetailPanel(detailPanel, countryData, detail);
-  } catch (err) {
-    renderDetailPanel(detailPanel, countryData, {});
-    console.warn("Detail fetch failed:", err);
+async function openDetail(countryData) {
+  const iso3 = countryData.iso3;
+  _openIso3 = iso3;
+  detailPanel.classList.add("open");
+
+  // Cache hit: render immediately, then load partners
+  const cached = getCachedCountryDetail(iso3);
+  if (cached) {
+    renderDetailPanel(detailPanel, countryData, cached, null);
+    const partners = await fetchTradePartners(iso3);
+    if (_openIso3 === iso3) renderDetailPanel(detailPanel, countryData, cached, partners);
+    return;
   }
+
+  // Cache miss: show loading state, then progressively fill in
+  renderDetailPanel(detailPanel, countryData, null, null);
+  const partnersPromise = fetchTradePartners(iso3);
+
+  // Phase 1: 3 indicators + history (renders stats + sparkline quickly)
+  const core = await fetchCountryCore(iso3);
+  if (_openIso3 !== iso3) return;
+  renderDetailPanel(detailPanel, countryData, { ...core, _sectorsLoading: true }, null);
+
+  // Phase 2: 6 sector/trade indicators + partners (fills in the rest)
+  const [supp, partners] = await Promise.all([fetchCountrySupp(iso3), partnersPromise]);
+  if (_openIso3 !== iso3) return;
+  const detail = { ...core, ...supp };
+  setCachedCountryDetail(iso3, detail);
+  renderDetailPanel(detailPanel, countryData, detail, partners);
 }
 
 function closeDetail() {
@@ -90,6 +113,89 @@ backBtn.addEventListener("click", () => {
 
 closeBtn.addEventListener("click", closeDetail);
 
+// ─── Country search ───────────────────────────────────────────────────────────
+
+function initSearch(countries) {
+  const input    = document.getElementById("country-input");
+  const dropdown = document.getElementById("search-dropdown");
+  if (!input || !dropdown) return;
+
+  let filtered    = [];
+  let activeIndex = -1;
+
+  function renderDropdown(matches) {
+    filtered    = matches;
+    activeIndex = -1;
+    if (!matches.length) {
+      dropdown.innerHTML = "";
+      dropdown.classList.add("hidden");
+      input.setAttribute("aria-expanded", "false");
+      return;
+    }
+    dropdown.innerHTML = matches.map((c, i) =>
+      `<li class="search-item" role="option" data-idx="${i}">
+        <span class="si-flag">${c.flag}</span>
+        <span class="si-name">${c.name}</span>
+        <span class="si-continent">${c.continent}</span>
+      </li>`
+    ).join("");
+    dropdown.classList.remove("hidden");
+    input.setAttribute("aria-expanded", "true");
+  }
+
+  function pick(country) {
+    input.value = "";
+    dropdown.innerHTML = "";
+    dropdown.classList.add("hidden");
+    input.setAttribute("aria-expanded", "false");
+    activeIndex = -1;
+    filtered = [];
+    openDetail(country);
+  }
+
+  function setActive(idx) {
+    activeIndex = idx;
+    dropdown.querySelectorAll(".search-item").forEach((li, i) =>
+      li.classList.toggle("active", i === activeIndex)
+    );
+  }
+
+  input.addEventListener("input", () => {
+    const q = input.value.trim().toLowerCase();
+    if (!q) { renderDropdown([]); return; }
+    renderDropdown(
+      countries.filter(c => c.name.toLowerCase().includes(q)).slice(0, 8)
+    );
+  });
+
+  input.addEventListener("keydown", (e) => {
+    if (!filtered.length) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActive(Math.min(activeIndex + 1, filtered.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActive(Math.max(activeIndex - 1, 0));
+    } else if (e.key === "Enter" && activeIndex >= 0) {
+      e.preventDefault();
+      pick(filtered[activeIndex]);
+    } else if (e.key === "Escape") {
+      renderDropdown([]);
+    }
+  });
+
+  dropdown.addEventListener("mousedown", (e) => {
+    const li = e.target.closest(".search-item");
+    if (!li) return;
+    e.preventDefault();
+    pick(filtered[parseInt(li.dataset.idx, 10)]);
+  });
+
+  input.addEventListener("blur", () => {
+    setTimeout(() => renderDropdown([]), 150);
+  });
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function init() {
@@ -114,6 +220,15 @@ async function init() {
     });
 
     await renderer.render(data);
+
+    const allCountries = data.continents.flatMap(c =>
+      c.countries.map(country => ({
+        ...country,
+        flag: flagEmoji(country.iso2),
+        continentColor: c.color,
+      }))
+    );
+    initSearch(allCountries);
 
   } catch (err) {
     console.error(err);
