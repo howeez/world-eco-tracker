@@ -665,6 +665,149 @@ header .subtitle {
   color: var(--ink);
 }
 
+.trade-accordion {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 0.35rem;
+}
+
+.trade-accordion-summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.38rem 0.5rem;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.12s;
+  user-select: none;
+}
+
+.trade-accordion-summary::-webkit-details-marker { display: none; }
+
+.trade-accordion-summary:hover { background: rgba(255,255,255,0.04); }
+
+.trade-accordion[open] > .trade-accordion-summary {
+  border-bottom: 1px solid var(--border);
+  border-radius: 6px 6px 0 0;
+}
+
+.ta-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+.ta-label {
+  flex: 1;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  font-family: 'DM Mono', monospace;
+}
+
+.ta-chevron {
+  font-size: 0.65rem;
+  opacity: 0.4;
+  display: inline-block;
+  transition: transform 0.18s;
+  color: var(--ink-faint);
+}
+
+.trade-accordion[open] > .trade-accordion-summary > .ta-chevron {
+  transform: rotate(90deg);
+  opacity: 0.7;
+}
+
+.trade-accordion-body { padding: 0.5rem 0.5rem 0.4rem; }
+
+/* ─── Partner bar (clickable) ─────────────────────────────────────────────── */
+.partner-bar { cursor: pointer; border-radius: 4px; padding: 0 2px; margin: 0 -2px; transition: background 0.1s; }
+.partner-bar:hover { background: rgba(255,255,255,0.05); }
+
+/* ─── Trade partner search ────────────────────────────────────────────────── */
+.trade-search-wrap { position: relative; margin: 0.45rem 0 0.5rem; }
+.trade-search-input {
+  width: 100%;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--ink);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.73rem;
+  padding: 0.33rem 0.6rem;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.trade-search-input:focus { border-color: rgba(255,255,255,0.2); }
+.trade-search-input::placeholder { color: var(--ink-faint); }
+.trade-search-dropdown {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 0; right: 0;
+  background: #1e2130;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  list-style: none;
+  z-index: 50;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.trade-search-dropdown.hidden { display: none; }
+.ts-item {
+  padding: 0.32rem 0.6rem;
+  font-size: 0.73rem;
+  font-family: 'DM Mono', monospace;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.ts-item:hover, .ts-item.active { background: rgba(255,255,255,0.08); color: var(--ink); }
+
+/* ─── Bilateral trade view ────────────────────────────────────────────────── */
+.bilateral-back {
+  display: flex;
+  align-items: center;
+  background: none;
+  border: none;
+  color: var(--ink-faint);
+  font-size: 0.72rem;
+  font-family: 'DM Mono', monospace;
+  cursor: pointer;
+  padding: 0 0 0.65rem;
+  letter-spacing: 0.01em;
+  transition: color 0.12s;
+}
+.bilateral-back:hover { color: var(--ink-soft); }
+.bilateral-header { margin-bottom: 0.8rem; }
+.bilateral-countries { font-size: 1.1rem; font-weight: 700; color: var(--ink); line-height: 1.3; letter-spacing: -0.01em; }
+.bilateral-subtitle { font-size: 0.68rem; color: var(--ink-faint); font-family: 'DM Mono', monospace; margin-top: 0.15rem; }
+.bilateral-stats { display: flex; gap: 0.4rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+.bilateral-stat {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255,255,255,0.04);
+  border-radius: 6px;
+  padding: 0.35rem 0.45rem;
+}
+.bstat-label {
+  font-size: 0.62rem;
+  color: var(--ink-faint);
+  font-family: 'DM Mono', monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 0.1rem;
+}
+.bstat-value { font-family: 'DM Mono', monospace; font-size: 0.82rem; font-weight: 500; }
+.bstat-year { font-size: 0.6rem; color: var(--ink-faint); font-family: 'DM Mono', monospace; margin-top: 0.05rem; }
+.bilateral-legend {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+  font-size: 0.68rem;
+  color: var(--ink-soft);
+  font-family: 'DM Mono', monospace;
+}
+.bl-item { display: flex; align-items: center; gap: 0.3rem; }
+.bl-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.bilateral-chart { overflow: visible; }
+
 /* ─── Tooltip ─────────────────────────────────────────────────────────────── */
 #tooltip {
   position: fixed;

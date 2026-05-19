@@ -354,8 +354,13 @@ async function _oecGet(url) {
 function _parseOECRows(json, partnerField) {
   try {
     const rows = json?.data ?? [];
+    const idField = partnerField + " ID";
     return rows
-      .map(d => ({ name: cleanName(d[partnerField] ?? ""), value: +(d["Trade Value"] ?? 0) }))
+      .map(d => ({
+        name: cleanName(d[partnerField] ?? ""),
+        oecCode: d[idField] ?? null,
+        value: +(d["Trade Value"] ?? 0),
+      }))
       .filter(d => d.value > 0 && d.name)
       .sort((a, b) => b.value - a.value);
   } catch { return []; }
@@ -437,6 +442,125 @@ function _oecTopGoods(rows, n = 10) {
     ...d,
     share: total > 0 ? (d.value / total) * 100 : 0,
   }));
+}
+
+export function isoToOEC(iso3) { return _isoToOEC(iso3); }
+
+/**
+ * Fetch top traded goods (HS2 chapter) between two specific countries.
+ * Returns { exports: [{name, value, share}], imports: [...], year } or null.
+ * Uses the same single-include pattern: drilldown on (HS2, Partner Country),
+ * filter home country via include=, client-side filter to partner.
+ */
+export async function fetchBilateralGoods(homeIso3, partnerOecCode) {
+  const cacheKey = `gdpviz_bilgoods_v1_${homeIso3}_${partnerOecCode}`;
+  const cached = _cacheGet(cacheKey);
+  if (cached) return cached;
+
+  const homeCode = _isoToOEC(homeIso3);
+  if (!homeCode || !partnerOecCode) return null;
+
+  for (const year of [2023, 2022, 2021]) {
+    try {
+      const [expJson, impJson] = await Promise.all([
+        _oecGet(
+          `${OEC_BASE}/data.jsonrecords?cube=trade_i_baci_a_22` +
+          `&drilldowns=HS2,Importer+Country&measures=Trade+Value` +
+          `&include=Exporter+Country:${homeCode}&Year=${year}&limit=5000`
+        ),
+        _oecGet(
+          `${OEC_BASE}/data.jsonrecords?cube=trade_i_baci_a_22` +
+          `&drilldowns=HS2,Exporter+Country&measures=Trade+Value` +
+          `&include=Importer+Country:${homeCode}&Year=${year}&limit=5000`
+        ),
+      ]);
+
+      function _parseBilGoods(json, partnerIdField) {
+        const rows = (json?.data ?? []).filter(d => d[partnerIdField] === partnerOecCode && d["Trade Value"] != null);
+        if (!rows.length) return [];
+        const nameField = Object.keys(rows[0]).find(k =>
+          typeof rows[0][k] === "string" && !k.endsWith(" ID") && !k.includes("Country") && k !== "Year"
+        );
+        if (!nameField) return [];
+        const items = rows
+          .map(d => ({ name: String(d[nameField]).trim(), value: d["Trade Value"] }))
+          .filter(d => d.value > 0 && d.name)
+          .sort((a, b) => b.value - a.value);
+        const total = items.reduce((s, d) => s + d.value, 0);
+        return items.slice(0, 10).map(d => ({ ...d, share: total > 0 ? (d.value / total) * 100 : 0 }));
+      }
+
+      const exports = _parseBilGoods(expJson, "Importer Country ID");
+      const imports = _parseBilGoods(impJson, "Exporter Country ID");
+      if (!exports.length && !imports.length) continue;
+
+      const result = { exports, imports, year: String(year) };
+      _cacheSet(cacheKey, result);
+      return result;
+    } catch (err) {
+      console.warn(`bilateral goods ${year} failed:`, err);
+      break;
+    }
+  }
+  return null;
+}
+
+/**
+ * Fetch bilateral merchandise trade history between two countries.
+ * Returns { exports: [{value, date}], imports: [{value, date}] }
+ * where exports = home→partner, imports = partner→home.
+ *
+ * OEC BACI data is split across cubes by HS revision. "trade_i_baci_a_22"
+ * only contains 2022+. We query _22, _17, and _12 in parallel to cover ~2012-2023,
+ * then merge by year. Single include= per request on a dimension that is also in
+ * drilldowns; client-side filter to the specific partner.
+ */
+export async function fetchBilateralHistory(homeIso3, partnerOecCode) {
+  const cacheKey = `gdpviz_bilateral_v5_${homeIso3}_${partnerOecCode}`;
+  const cached = _cacheGet(cacheKey);
+  if (cached) return cached;
+
+  const homeCode = _isoToOEC(homeIso3);
+  if (!homeCode || !partnerOecCode) return null;
+
+  const _BACI_CUBES = ["trade_i_baci_a_22", "trade_i_baci_a_17", "trade_i_baci_a_12"];
+
+  async function _fetchOneCube(cube, role) {
+    try {
+      const url = role === "exp"
+        ? `${OEC_BASE}/data.jsonrecords?cube=${cube}&drilldowns=Year,Importer+Country&measures=Trade+Value&include=Exporter+Country:${homeCode}&limit=10000`
+        : `${OEC_BASE}/data.jsonrecords?cube=${cube}&drilldowns=Year,Exporter+Country&measures=Trade+Value&include=Importer+Country:${homeCode}&limit=10000`;
+      const idField = role === "exp" ? "Importer Country ID" : "Exporter Country ID";
+      const json = await _oecGet(url);
+      return (json?.data ?? [])
+        .filter(d => d[idField] === partnerOecCode && d["Trade Value"] != null)
+        .map(d => ({ value: d["Trade Value"], date: String(d.Year) }));
+    } catch { return []; }
+  }
+
+  const [expGroups, impGroups] = await Promise.all([
+    Promise.all(_BACI_CUBES.map(c => _fetchOneCube(c, "exp"))),
+    Promise.all(_BACI_CUBES.map(c => _fetchOneCube(c, "imp"))),
+  ]);
+
+  function _mergeByYear(groups) {
+    const map = new Map();
+    for (const rows of groups) {
+      for (const { value, date } of rows) {
+        if (!map.has(date)) map.set(date, value);
+      }
+    }
+    return [...map.entries()]
+      .sort((a, b) => +a[0] - +b[0])
+      .map(([date, value]) => ({ date, value }));
+  }
+
+  const result = {
+    exports: _mergeByYear(expGroups),
+    imports: _mergeByYear(impGroups),
+  };
+  _cacheSet(cacheKey, result);
+  return result;
 }
 
 // ── Country detail — OEC WDI cube (mirrors World Bank WDI, much faster) ───────

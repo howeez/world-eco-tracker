@@ -192,6 +192,7 @@ export class BubbleRenderer {
         event.stopPropagation();
         if (isWorld) {
           this._enterContinent(d.parent.data.name);
+          this.onCountryClick(d.data);
         } else {
           this.onCountryClick(d.data);
         }

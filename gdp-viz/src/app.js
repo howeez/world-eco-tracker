@@ -14,7 +14,7 @@ import {
   fetchTradePartners, fetchTradeGoods, flagEmoji,
 } from "./worldbank.js";
 import { BubbleRenderer, renderLegend } from "./renderer.js";
-import { renderDetailPanel } from "./panel.js";
+import { renderDetailPanel, setCountryList } from "./panel.js";
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 
@@ -230,6 +230,7 @@ async function init() {
       }))
     );
     initSearch(allCountries);
+    setCountryList(allCountries);
 
   } catch (err) {
     console.error(err);
