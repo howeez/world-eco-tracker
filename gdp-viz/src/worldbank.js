@@ -239,105 +239,43 @@ export async function fetchWorldGDP() {
   return result;
 }
 
-/**
- * Fetch sub-sector detail for a given sector (called on sector bar click).
- * Agriculture → FAO FAOSTAT (top products by gross production value)
- * Industry    → World Bank UNIDO manufacturing sub-sector indicators
- * Services    → World Bank contextual indicators
- */
+const _SECTOR_CONF = {
+  agriculture: { main: "NV.AGR.TOTL.ZS", supp: "SL.AGR.EMPL.ZS", suppKey: "empl" },
+  industry:    { main: "NV.IND.TOTL.ZS",  supp: "NV.IND.MANF.ZS", suppKey: "mfg"  },
+  services:    { main: "NV.SRV.TOTL.ZS",  supp: "SL.SRV.EMPL.ZS", suppKey: "empl" },
+};
+
+const _SECTOR_HIST = Array.from({ length: 11 }, (_, i) => 2013 + i).join(","); // 2013–2023
+
+/** Fetch 10-year % of GDP trend + supplementary stat for a sector. */
 export async function fetchSectorDetail(iso3, sector) {
-  const cacheKey = `gdpviz_sector_${iso3}_${sector}`;
+  const cacheKey = `gdpviz_sectorv2_${iso3}_${sector}`;
   const cached = _cacheGet(cacheKey);
   if (cached) return cached;
 
-  let result = {};
-  if (sector === "agriculture") result = await _fetchAgDetail(iso3);
-  else if (sector === "industry")    result = await _fetchIndDetail(iso3);
-  else if (sector === "services")    result = await _fetchSrvDetail(iso3);
+  const conf = _SECTOR_CONF[sector];
+  if (!conf) return {};
 
+  const [histRows, suppRows] = await Promise.all([
+    _wdiGet(conf.main, _SECTOR_HIST).catch(() => []),
+    _wdiGet(conf.supp, _WDI_YEARS).catch(() => []),
+  ]);
+
+  const history = histRows
+    .filter(r => r["Country Official ID"] === iso3.toLowerCase() && r.Measure != null)
+    .sort((a, b) => a.Year - b.Year)
+    .map(r => ({ value: r.Measure, date: String(r.Year) }));
+
+  const { value: suppValue, year: suppYear } = _wdiLatest(suppRows, iso3);
+
+  const result = {
+    source: "oec_wdi",
+    history,
+    [conf.suppKey]: suppValue,
+    [`${conf.suppKey}Year`]: suppYear,
+  };
   _cacheSet(cacheKey, result);
   return result;
-}
-
-// Matches FAO aggregate/total item names that should be excluded
-const _FAO_AGG = /total|aggregate|excl\.|primary\s*$|,\s*nes\b|n\.e\.s\.|excluding|all items|\s\+\s/i;
-
-async function _fetchAgDetail(iso3) {
-  for (const year of [2022, 2021, 2020]) {
-    try {
-      const url = `https://fenix.fao.org/faostat/api/v1/data/QV` +
-        `?area_cs=ISO3&area=${iso3}&element=57&year=${year}&format=json`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-      if (!res.ok) break;
-      const json = await res.json();
-
-      const rows = (json.data ?? [])
-        .map(d => ({ item: String(d.item ?? ""), value: Number(d.value ?? 0) }))
-        .filter(d => d.value > 0 && !_FAO_AGG.test(d.item))
-        .sort((a, b) => b.value - a.value);
-
-      if (!rows.length) continue;
-
-      const total = rows.reduce((s, d) => s + d.value, 0);
-      return {
-        source: "fao", year,
-        items: rows.slice(0, 5).map(d => ({
-          name: _cleanFaoName(d.item),
-          pct:  (d.value / total) * 100,
-        })),
-      };
-    } catch { break; }
-  }
-
-  // Fallback to World Bank FAO-sourced production indices
-  const [crop, live, empl] = await Promise.all([
-    _wbLatest(iso3, "AG.PRD.CROP.XD"),
-    _wbLatest(iso3, "AG.PRD.LVSK.XD"),
-    _wbLatest(iso3, "SL.AGR.EMPL.ZS"),
-  ]);
-  return { source: "wb_fallback", crop, live, empl };
-}
-
-async function _fetchIndDetail(iso3) {
-  const SUB = [
-    ["Food & Beverages",      "NV.MNF.FBTO.ZS.UN"],
-    ["Textiles & Apparel",    "NV.MNF.TXTL.ZS.UN"],
-    ["Chemicals",             "NV.MNF.CHEM.ZS.UN"],
-    ["Machinery & Transport", "NV.MNF.MTRN.ZS.UN"],
-    ["Other Manufacturing",   "NV.MNF.OTHR.ZS.UN"],
-  ];
-  const [mfgTotal, ...subs] = await Promise.all([
-    _wbLatest(iso3, "NV.IND.MANF.ZS"),
-    ...SUB.map(([name, id]) => _wbLatest(iso3, id).then(v => ({ name, pct: v }))),
-  ]);
-  return {
-    source: "wb",
-    mfgTotal,
-    subSectors: subs.filter(s => s.pct != null),
-  };
-}
-
-async function _fetchSrvDetail(iso3) {
-  const IND = {
-    tour:   "ST.INT.RCPT.GD.ZS",   // Tourism receipts (% of GDP)
-    health: "SH.XPD.CHEX.GD.ZS",   // Current health expenditure (% of GDP) — replaces discontinued SH.XPD.TOTL.GD.ZS
-    edu:    "SE.XPD.TOTL.GD.ZS",   // Education expenditure (% of GDP)
-    govt:   "GC.XPN.TOTL.GD.ZS",   // Govt. final consumption (% of GDP)
-    empl:   "SL.SRV.EMPL.ZS",      // Services employment (% of total)
-  };
-  // Use mrv=5 — health/tourism data is updated less frequently than annual
-  const pairs = await Promise.all(
-    Object.entries(IND).map(([k, id]) => _wbLatest(iso3, id, 5).then(v => [k, v]))
-  );
-  return { source: "wb", ...Object.fromEntries(pairs) };
-}
-
-async function _wbLatest(iso3, indicator, mrv = 3) {
-  try {
-    const res  = await fetch(`${WB_BASE}/country/${iso3}/indicator/${indicator}?format=json&mrv=${mrv}&per_page=${mrv}`);
-    const [, data] = await res.json();
-    return (data ?? []).filter(d => d.value !== null)[0]?.value ?? null;
-  } catch { return null; }
 }
 
 
@@ -431,48 +369,135 @@ function _oecTopPartners(rows, n = 10) {
   }));
 }
 
-function _cleanFaoName(name) {
-  return name
-    .replace(/\s*\([^)]*\)/g, "")   // strip parentheticals like "(corn)"
-    .replace(/,\s*paddy$/i, "")      // "Rice, paddy" → "Rice"
-    .replace(/,\s*green$/i, "")      // "Coffee, green" → "Coffee"
-    .replace(/,\s*fresh$/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
+/**
+ * Fetch top export/import goods by HS chapter (HS2) via OEC BACI.
+ * Returns { topExportGoods, topImportGoods, year } or null on failure.
+ */
+export async function fetchTradeGoods(iso3) {
+  const cacheKey = `gdpviz_goods_${iso3}`;
+  const cached = _cacheGet(cacheKey);
+  if (cached) return cached;
+
+  const oecCode = _isoToOEC(iso3);
+  if (!oecCode) return null;
+
+  for (const year of [2023, 2022, 2021]) {
+    try {
+      const mk = (dimFilter, drilldown = "HS2") =>
+        `${OEC_BASE}/data.jsonrecords?cube=trade_i_baci_a_22` +
+        `&drilldowns=${drilldown}` +
+        `&measures=Trade+Value` +
+        `&include=${dimFilter}` +
+        `&Year=${year}` +
+        `&limit=200`;
+
+      const [expJson, impJson] = await Promise.all([
+        _oecGet(mk(`Exporter+Country:${oecCode}`)),
+        _oecGet(mk(`Importer+Country:${oecCode}`)),
+      ]);
+
+      const expRows = _parseOECGoodsRows(expJson);
+      const impRows = _parseOECGoodsRows(impJson);
+      if (!expRows.length && !impRows.length) continue;
+
+      const result = {
+        topExportGoods: _oecTopGoods(expRows),
+        topImportGoods: _oecTopGoods(impRows),
+        year: String(year),
+      };
+      _cacheSet(cacheKey, result);
+      return result;
+    } catch (err) {
+      console.warn(`OEC goods ${year} failed:`, err);
+      break;
+    }
+  }
+  return null;
 }
 
-// ── Country detail — two-phase progressive loading ───────────────────────────
+function _parseOECGoodsRows(json) {
+  try {
+    const rows = json?.data ?? [];
+    if (!rows.length) return [];
+    // Detect the product name field: first string field that isn't a metadata column
+    const nameField = Object.keys(rows[0]).find(k =>
+      typeof rows[0][k] === "string" && k !== "Year" && !k.endsWith(" ID")
+    );
+    if (!nameField) return [];
+    return rows
+      .map(d => ({ name: String(d[nameField] ?? "").trim(), value: +(d["Trade Value"] ?? 0) }))
+      .filter(d => d.value > 0 && d.name)
+      .sort((a, b) => b.value - a.value);
+  } catch { return []; }
+}
 
-async function _fetchIndicatorBatch(iso3, indicators, mrv = 5) {
+function _oecTopGoods(rows, n = 10) {
+  const total = rows.reduce((s, d) => s + d.value, 0);
+  return rows.slice(0, n).map(d => ({
+    ...d,
+    share: total > 0 ? (d.value / total) * 100 : 0,
+  }));
+}
+
+// ── Country detail — OEC WDI cube (mirrors World Bank WDI, much faster) ───────
+
+const OEC_WDI = "https://api-v2.oec.world/tesseract/data.jsonrecords?cube=indicators_i_wdi_a";
+
+// Cover lagged indicators (tariffs ~2019, trade ~2022, GDP growth ~2024)
+const _WDI_YEARS  = "2024,2023,2022,2021,2020,2019,2018";
+// 21 years for the sparkline history
+const _WDI_HIST   = Array.from({ length: 21 }, (_, i) => 2004 + i).join(",");
+
+async function _wdiGet(indicatorId, years) {
+  const url = `${OEC_WDI}&drilldowns=Country+Official,Year&measures=Measure` +
+              `&include=Indicator:${indicatorId}&Year=${years}&limit=10000`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  if (!res.ok) throw new Error(`OEC WDI ${res.status}`);
+  return (await res.json()).data ?? [];
+}
+
+function _wdiLatest(rows, iso3) {
+  const hits = rows
+    .filter(r => r["Country Official ID"] === iso3.toLowerCase() && r.Measure != null)
+    .sort((a, b) => b.Year - a.Year);
+  return hits.length ? { value: hits[0].Measure, year: String(hits[0].Year) } : { value: null, year: null };
+}
+
+async function _fetchIndicatorBatch(iso3, indicators) {
   const pairs = await Promise.all(
-    Object.entries(indicators).map(([key, ind]) =>
-      fetch(`${WB_BASE}/country/${iso3}/indicator/${ind}?format=json&mrv=${mrv}&per_page=${mrv}`)
-        .then(r => r.json())
-        .then(([, data]) => [key, (data ?? []).filter(d => d.value !== null)])
-        .catch(() => [key, []])
+    Object.entries(indicators).map(([key, indId]) =>
+      _wdiGet(indId, _WDI_YEARS)
+        .then(rows => {
+          const { value, year } = _wdiLatest(rows, iso3);
+          return [key, value, year];
+        })
+        .catch(() => [key, null, null])
     )
   );
   const out = {};
-  for (const [key, data] of pairs) {
-    out[key] = data[0]?.value ?? null;
-    out[`${key}Year`] = data[0]?.date ?? null;
+  for (const [key, value, year] of pairs) {
+    out[key] = value;
+    out[`${key}Year`] = year;
   }
   return out;
 }
 
 /** Phase 1 — stats shown immediately (3 indicators + sparkline history). */
 export async function fetchCountryCore(iso3) {
-  const [stats, history] = await Promise.all([
+  const [stats, histRows] = await Promise.all([
     _fetchIndicatorBatch(iso3, {
       gdpPerCapita: "NY.GDP.PCAP.KD",
       gdpGrowth:    "NY.GDP.MKTP.KD.ZG",
       population:   "SP.POP.TOTL",
     }),
-    fetch(`${WB_BASE}/country/${iso3}/indicator/${GDP_INDICATOR}?format=json&mrv=20&per_page=20`)
-      .then(r => r.json())
-      .then(([, data]) => (data ?? []).filter(d => d.value !== null).reverse())
-      .catch(() => []),
+    _wdiGet(GDP_INDICATOR, _WDI_HIST),
   ]);
+
+  const history = histRows
+    .filter(r => r["Country Official ID"] === iso3.toLowerCase() && r.Measure != null)
+    .sort((a, b) => a.Year - b.Year)
+    .map(r => ({ value: r.Measure, date: String(r.Year) }));
+
   return { ...stats, history };
 }
 

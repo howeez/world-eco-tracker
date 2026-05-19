@@ -14,11 +14,12 @@ import {
 
 // ── Public API ─────────────────────────────────────────────────────────────────
 
-export function renderDetailPanel(panel, country, detail, partners) {
+export function renderDetailPanel(panel, country, detail, partners, goods = null) {
   const { name, iso2, iso3, gdp, continent, color } = country;
 
   const flag      = flagEmoji(iso2);
-  const sectors   = detail ? buildSectorBars(detail.agriculture, detail.industry, detail.services) : null;
+  const agr = detail?.agriculture, ind = detail?.industry, srv = detail?.services;
+  const hasSectors = agr != null && ind != null && srv != null;
   const growth    = detail?.gdpGrowth;
   const growthStr = growth != null ? `${growth > 0 ? "+" : ""}${growth.toFixed(2)}%` : "N/A";
   const growthClr = growth == null ? "#888" : growth >= 0 ? "#10b981" : "#ef4444";
@@ -53,18 +54,34 @@ export function renderDetailPanel(panel, country, detail, partners) {
       </div>
     </div>
 
-    ${sectors ? `
+    ${hasSectors ? `
     <div class="detail-section">
-      <div class="section-title">GDP by Sector <span class="section-hint">· click to expand</span></div>
-      <div class="sector-bars">
-        ${sectors.map(s => `
-          <div class="sector-row" data-sector="${s.key}">
-            <div class="sector-name">${s.name} <span class="sector-chevron">›</span></div>
-            <div class="sector-track">
-              <div class="sector-fill" style="width:${s.pct.toFixed(1)}%;background:${s.color}"></div>
-            </div>
-            <div class="sector-pct">${s.pct.toFixed(1)}%</div>
-          </div>`).join("")}
+      <div class="section-title">GDP Composition <span class="section-hint">· % of GDP · click to expand</span></div>
+      <div class="sector-stack-bar">
+        <div class="sector-seg" style="flex:${agr.toFixed(2)};background:#10b981" data-sector="agriculture" title="Agriculture · ${agr.toFixed(1)}%"></div>
+        <div class="sector-seg" style="flex:${ind.toFixed(2)};background:#6366f1" data-sector="industry"    title="Industry · ${ind.toFixed(1)}%"></div>
+        <div class="sector-seg" style="flex:${srv.toFixed(2)};background:#f59e0b" data-sector="services"    title="Services · ${srv.toFixed(1)}%"></div>
+        ${(100 - agr - ind - srv) > 0.5 ? `<div class="sector-seg sector-seg-other" style="flex:${(100 - agr - ind - srv).toFixed(2)}" title="Other · ${(100 - agr - ind - srv).toFixed(1)}%"></div>` : ""}
+      </div>
+      <div class="sector-legend">
+        <div class="sector-legend-item" data-sector="agriculture">
+          <span class="sli-dot" style="background:#10b981"></span>
+          <span class="sli-name">Agriculture</span>
+          <span class="sli-pct">${agr.toFixed(1)}%</span>
+          <span class="sli-chevron">›</span>
+        </div>
+        <div class="sector-legend-item" data-sector="industry">
+          <span class="sli-dot" style="background:#6366f1"></span>
+          <span class="sli-name">Industry</span>
+          <span class="sli-pct">${ind.toFixed(1)}%</span>
+          <span class="sli-chevron">›</span>
+        </div>
+        <div class="sector-legend-item" data-sector="services">
+          <span class="sli-dot" style="background:#f59e0b"></span>
+          <span class="sli-name">Services</span>
+          <span class="sli-pct">${srv.toFixed(1)}%</span>
+          <span class="sli-chevron">›</span>
+        </div>
       </div>
     </div>` : (detail === null || detail?._sectorsLoading)
       ? `<div class="detail-loading"><div class="mini-spinner"></div><span>Loading breakdown…</span></div>`
@@ -76,7 +93,7 @@ export function renderDetailPanel(panel, country, detail, partners) {
       <div class="sparkline-wrap"></div>
     </div>` : ""}
 
-    ${detail !== null ? buildTradeSection(detail, partners) : ""}
+    ${detail !== null ? buildTradeSection(detail, partners, goods) : ""}
 
     <div class="detail-source">
       World Bank · NY.GDP.MKTP.KD (constant 2015 USD)
@@ -86,19 +103,20 @@ export function renderDetailPanel(panel, country, detail, partners) {
     buildSparkline(content.querySelector(".sparkline-wrap"), detail.history, color);
   }
 
-  if (sectors) {
-    initSectorDrilldown(content, iso3, detail);
+  if (hasSectors) {
+    initSectorDrilldown(content, iso3);
   }
 }
 
 // ── Trade section ─────────────────────────────────────────────────────────────
 
-function buildTradeSection(detail, partners) {
+function buildTradeSection(detail, partners, goods) {
   const hasAgg = detail?.exports != null || detail?.imports != null;
-  if (!hasAgg && partners === null) return "";
+  if (!hasAgg && partners === null && goods === null) return "";
 
   const balance   = (detail?.exports ?? 0) - (detail?.imports ?? 0);
   const tradeYear = detail?.exportsYear ?? "";
+  const isLoading = partners === null && goods === null;
 
   return `
   <div class="detail-section">
@@ -128,25 +146,36 @@ function buildTradeSection(detail, partners) {
       </div>` : ""}
     </div>` : ""}
 
-    ${partners === null ? `
-    <div class="detail-loading"><div class="mini-spinner"></div><span>Loading trade partners…</span></div>` : ""}
+    ${isLoading ? `
+    <div class="detail-loading"><div class="mini-spinner"></div><span>Loading trade data…</span></div>` : ""}
+
+    ${goods?.topExportGoods?.length ? `
+    <div class="sub-title" style="margin-top:10px">Export Composition · ${goods.year ?? ""} · % of exports</div>
+    <div class="sub-bars">${goods.topExportGoods.map(p => subBar(p.name, p.share, "#10b981")).join("")}</div>` : ""}
 
     ${partners?.topExports?.length ? `
     <div class="sub-title" style="margin-top:10px">Top Export Destinations · ${partners.year ?? ""}</div>
     <div class="sub-bars">${partners.topExports.map(p => subBar(p.name, p.share, "#10b981")).join("")}</div>` : ""}
 
+    ${goods?.topImportGoods?.length ? `
+    <div class="sub-title" style="margin-top:10px">Import Composition · ${goods.year ?? ""} · % of imports</div>
+    <div class="sub-bars">${goods.topImportGoods.map(p => subBar(p.name, p.share, "#f59e0b")).join("")}</div>` : ""}
+
     ${partners?.topImports?.length ? `
     <div class="sub-title" style="margin-top:10px">Top Import Sources · ${partners.year ?? ""}</div>
     <div class="sub-bars">${partners.topImports.map(p => subBar(p.name, p.share, "#f59e0b")).join("")}</div>` : ""}
 
-    <div class="sub-note">World Bank · TX.VAL.MRCH / TM.VAL.MRCH / TM.TAX.MRCH · IMF DOTS TXG_FOB_USD / TMG_CIF_USD</div>
+    <div class="sub-note">OEC · BACI · World Development Indicators</div>
   </div>`;
 }
 
 // ── Sparkline ─────────────────────────────────────────────────────────────────
 
-function buildSparkline(container, history, color) {
+function buildSparkline(container, history, color, opts = {}) {
   if (!container) return;
+
+  const { formatY = null, zeroBased = true } = opts;
+  const yFmt = formatY ?? formatCompact;
 
   const margin = { top: 8, right: 8, bottom: 18, left: 54 };
   const W = 280, H = 90;
@@ -158,8 +187,9 @@ function buildSparkline(container, history, color) {
   const n     = vals.length;
 
   const xS = d3.scaleLinear().domain([0, n - 1]).range([0, iW]);
+  const minVal = zeroBased ? 0 : Math.max(0, d3.min(vals) - (d3.max(vals) - d3.min(vals)) * 0.25);
   const yS = d3.scaleLinear()
-    .domain([0, d3.max(vals)])
+    .domain([minVal, d3.max(vals)])
     .range([iH, 0])
     .nice();
 
@@ -187,7 +217,7 @@ function buildSparkline(container, history, color) {
       d3.axisLeft(yS)
         .ticks(3)
         .tickSize(-iW)
-        .tickFormat(v => formatCompact(v))
+        .tickFormat(v => yFmt(v))
     )
     .call(axis => {
       axis.select(".domain").remove();
@@ -243,7 +273,7 @@ function buildSparkline(container, history, color) {
       hoverG.style("display", null);
       vLine.attr("x1", cx).attr("x2", cx);
       hDot.attr("cx", cx).attr("cy", cy);
-      hText.text(`${years[idx]}: ${formatCompact(vals[idx])}`);
+      hText.text(`${years[idx]}: ${yFmt(vals[idx])}`);
 
       const bb  = hText.node().getBBox();
       const pad = 4;
@@ -262,112 +292,72 @@ function buildSparkline(container, history, color) {
 
 // ── Sector drill-down ─────────────────────────────────────────────────────────
 
-function initSectorDrilldown(content, iso3, detail) {
-  content.querySelectorAll(".sector-row").forEach(row => {
-    row.addEventListener("click", async () => {
-      const sector = row.dataset.sector;
+const SECTOR_COLORS = { agriculture: "#10b981", industry: "#6366f1", services: "#f59e0b" };
 
-      const next = row.nextElementSibling;
-      if (next?.classList.contains("sector-expand")) {
-        next.remove();
-        row.classList.remove("expanded");
-        return;
-      }
+function initSectorDrilldown(content, iso3) {
+  function handleClick(sector) {
+    const existing   = content.querySelector(`.sector-expand[data-for="${sector}"]`);
+    const legendItem = content.querySelector(`.sector-legend-item[data-sector="${sector}"]`);
 
-      content.querySelectorAll(".sector-expand").forEach(el => el.remove());
-      content.querySelectorAll(".sector-row.expanded").forEach(el => el.classList.remove("expanded"));
-      row.classList.add("expanded");
+    if (existing) {
+      existing.remove();
+      legendItem?.classList.remove("expanded");
+      return;
+    }
 
-      const expand = document.createElement("div");
-      expand.className = "sector-expand";
-      expand.innerHTML = `<div class="detail-loading"><div class="mini-spinner"></div><span>Loading ${sector} detail…</span></div>`;
-      row.after(expand);
+    content.querySelectorAll(".sector-expand").forEach(el => el.remove());
+    content.querySelectorAll(".sector-legend-item.expanded").forEach(el => el.classList.remove("expanded"));
+    legendItem?.classList.add("expanded");
 
-      try {
-        const fetched = await fetchSectorDetail(iso3, sector);
-        expand.innerHTML = buildSectorExpansion(sector, detail, fetched);
-      } catch {
+    const expand = document.createElement("div");
+    expand.className  = "sector-expand";
+    expand.dataset.for = sector;
+    expand.innerHTML  = `<div class="detail-loading"><div class="mini-spinner"></div><span>Loading ${sector} detail…</span></div>`;
+    content.querySelector(".sector-legend")?.after(expand);
+
+    fetchSectorDetail(iso3, sector)
+      .then(fetched => {
+        expand.innerHTML = buildSectorExpansion(sector, fetched);
+        if (fetched.history?.length > 1) {
+          const wrap = expand.querySelector(".sector-history-wrap");
+          if (wrap) buildSparkline(wrap, fetched.history, SECTOR_COLORS[sector], {
+            formatY: v => `${v.toFixed(1)}%`,
+            zeroBased: false,
+          });
+        }
+      })
+      .catch(() => {
         expand.innerHTML = `<div class="sub-section"><div class="detail-na">Detail data unavailable</div></div>`;
-      }
-    });
+      });
+  }
+
+  content.querySelectorAll(".sector-legend-item, .sector-seg[data-sector]").forEach(el => {
+    el.addEventListener("click", () => handleClick(el.dataset.sector));
   });
 }
 
-function buildSectorExpansion(sector, detail, fetched) {
-  if (sector === "agriculture") {
-    const { source, year, items, crop, live, empl } = fetched;
+function buildSectorExpansion(sector, fetched) {
+  const SECTOR_META = {
+    agriculture: { title: "% of GDP · 2013–2023", suppLabel: "Agricultural employment", suppKey: "empl" },
+    industry:    { title: "% of GDP · 2013–2023", suppLabel: "Manufacturing (% of GDP)", suppKey: "mfg"  },
+    services:    { title: "% of GDP · 2013–2023", suppLabel: "Services employment",      suppKey: "empl" },
+  };
+  const meta      = SECTOR_META[sector];
+  const suppValue = fetched[meta.suppKey];
+  const suppYear  = fetched[`${meta.suppKey}Year`];
+  const hasHist   = fetched.history?.length > 1;
 
-    if (source === "fao" && items?.length) {
-      return `<div class="sub-section">
-        <div class="sub-title">Top Products · % of agricultural production value · ${year}</div>
-        <div class="sub-bars">${items.map(d => subBar(d.name, d.pct, "#10b981")).join("")}</div>
-        <div class="sub-note">FAO FAOSTAT · Gross Production Value (current USD)</div>
-      </div>`;
-    }
-
-    const hasIdx = crop != null && live != null;
-    if (!hasIdx && empl == null) return noSubData();
-    return `<div class="sub-section">
-      ${hasIdx ? `
-      <div class="sub-title">Production Indices (2014–16 = 100)</div>
-      <div class="sub-bars">
-        ${indexBar("Crops", crop)}
-        ${indexBar("Livestock", live)}
-      </div>` : ""}
-      ${empl != null ? `<div class="sub-stat">${empl.toFixed(1)}% of workforce in agriculture</div>` : ""}
-      <div class="sub-note">World Bank · FAO production indices</div>
-    </div>`;
+  if (!hasHist && suppValue == null) {
+    return `<div class="sub-section"><div class="detail-na">Trend data not available</div></div>`;
   }
 
-  if (sector === "industry") {
-    const { mfgTotal, subSectors } = fetched;
-    const ind = detail.industry;
-
-    if (subSectors?.length) {
-      const sorted = [...subSectors].sort((a, b) => b.pct - a.pct);
-      return `<div class="sub-section">
-        <div class="sub-title">Manufacturing sub-sectors · % of manufacturing value added</div>
-        <div class="sub-bars">${sorted.map(s => subBar(s.name, s.pct, "#818cf8")).join("")}</div>
-        ${mfgTotal != null ? `<div class="sub-stat">Manufacturing = ${mfgTotal.toFixed(1)}% of GDP</div>` : ""}
-        <div class="sub-note">World Bank · UNIDO · NV.MNF.*.ZS.UN</div>
-      </div>`;
-    }
-
-    if (mfgTotal != null && ind != null && ind > 0) {
-      const mfgPct = (mfgTotal / ind) * 100;
-      return `<div class="sub-section">
-        <div class="sub-title">% of Industry value added</div>
-        <div class="sub-bars">
-          ${subBar("Manufacturing", mfgPct, "#818cf8")}
-          ${subBar("Const. / Mining / Utilities", 100 - mfgPct, "#a78bfa")}
-        </div>
-        <div class="sub-note">World Bank · NV.IND.MANF.ZS</div>
-      </div>`;
-    }
-    return noSubData();
-  }
-
-  if (sector === "services") {
-    const { tour, health, edu, govt, empl } = fetched;
-    const gdpBars = [
-      govt   != null && { name: "Govt. Expenditure", val: govt   },
-      health != null && { name: "Health",             val: health },
-      edu    != null && { name: "Education",          val: edu    },
-      tour   != null && { name: "Tourism Receipts",   val: tour   },
-    ].filter(Boolean).sort((a, b) => b.val - a.val);
-
-    if (!gdpBars.length && empl == null) return noSubData();
-    return `<div class="sub-section">
-      ${gdpBars.length ? `
-      <div class="sub-title">Key indicators · % of GDP</div>
-      <div class="sub-bars">${gdpBars.map(d => subBar(d.name, d.val, "#f59e0b")).join("")}</div>` : ""}
-      ${empl != null ? `<div class="sub-stat">${empl.toFixed(1)}% of workforce in services</div>` : ""}
-      <div class="sub-note-muted">Product-level GDP contribution not available from World Bank API</div>
-      <div class="sub-note">World Bank · ST.INT.RCPT.GD.ZS · SH.XPD.TOTL.GD.ZS · SE.XPD.TOTL.GD.ZS · GC.XPN.TOTL.GD.ZS</div>
-    </div>`;
-  }
-
-  return noSubData();
+  return `<div class="sub-section">
+    ${hasHist ? `
+    <div class="sub-title">${meta.title}</div>
+    <div class="sector-history-wrap"></div>` : ""}
+    ${suppValue != null ? `<div class="sub-stat">${meta.suppLabel}: <strong>${suppValue.toFixed(1)}%</strong>${suppYear ? ` <span style="color:var(--ink-faint);font-size:0.85em">(${suppYear})</span>` : ""}</div>` : ""}
+    <div class="sub-note">OEC · World Development Indicators</div>
+  </div>`;
 }
 
 // ── Bar helpers ───────────────────────────────────────────────────────────────
@@ -379,32 +369,6 @@ function subBar(name, pct, color) {
     <div class="sub-bar-track"><div class="sub-bar-fill" style="width:${w.toFixed(1)}%;background:${color}"></div></div>
     <div class="sub-bar-pct">${pct.toFixed(1)}%</div>
   </div>`;
-}
-
-function indexBar(name, idx) {
-  const w = Math.min(100, (idx / 200) * 100);
-  return `<div class="sub-bar-row">
-    <div class="sub-bar-name">${name}</div>
-    <div class="sub-bar-track"><div class="sub-bar-fill" style="width:${w.toFixed(1)}%;background:#10b981"></div></div>
-    <div class="sub-bar-pct">${idx.toFixed(0)}</div>
-  </div>`;
-}
-
-function noSubData() {
-  return `<div class="sub-section"><div class="detail-na">Sub-sector data not available</div></div>`;
-}
-
-// ── Data helpers ──────────────────────────────────────────────────────────────
-
-function buildSectorBars(agr, ind, srv) {
-  if (agr == null || ind == null || srv == null) return null;
-  const tot = agr + ind + srv;
-  if (tot <= 0) return null;
-  return [
-    { name: "Agriculture", key: "agriculture", pct: (agr / tot) * 100, color: "#10b981" },
-    { name: "Industry",    key: "industry",    pct: (ind / tot) * 100, color: "#6366f1" },
-    { name: "Services",    key: "services",    pct: (srv / tot) * 100, color: "#f59e0b" },
-  ];
 }
 
 function fmtPop(n) {

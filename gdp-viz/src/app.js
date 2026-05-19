@@ -11,7 +11,7 @@
 import {
   fetchWorldGDP, fetchCountryCore, fetchCountrySupp,
   getCachedCountryDetail, setCachedCountryDetail,
-  fetchTradePartners, flagEmoji,
+  fetchTradePartners, fetchTradeGoods, flagEmoji,
 } from "./worldbank.js";
 import { BubbleRenderer, renderLegend } from "./renderer.js";
 import { renderDetailPanel } from "./panel.js";
@@ -52,30 +52,31 @@ async function openDetail(countryData) {
   _openIso3 = iso3;
   detailPanel.classList.add("open");
 
-  // Cache hit: render immediately, then load partners
+  // Cache hit: render immediately, then load trade data
   const cached = getCachedCountryDetail(iso3);
   if (cached) {
-    renderDetailPanel(detailPanel, countryData, cached, null);
-    const partners = await fetchTradePartners(iso3);
-    if (_openIso3 === iso3) renderDetailPanel(detailPanel, countryData, cached, partners);
+    renderDetailPanel(detailPanel, countryData, cached, null, null);
+    const [partners, goods] = await Promise.all([fetchTradePartners(iso3), fetchTradeGoods(iso3)]);
+    if (_openIso3 === iso3) renderDetailPanel(detailPanel, countryData, cached, partners, goods);
     return;
   }
 
   // Cache miss: show loading state, then progressively fill in
-  renderDetailPanel(detailPanel, countryData, null, null);
+  renderDetailPanel(detailPanel, countryData, null, null, null);
   const partnersPromise = fetchTradePartners(iso3);
+  const goodsPromise    = fetchTradeGoods(iso3);
 
   // Phase 1: 3 indicators + history (renders stats + sparkline quickly)
   const core = await fetchCountryCore(iso3);
   if (_openIso3 !== iso3) return;
-  renderDetailPanel(detailPanel, countryData, { ...core, _sectorsLoading: true }, null);
+  renderDetailPanel(detailPanel, countryData, { ...core, _sectorsLoading: true }, null, null);
 
-  // Phase 2: 6 sector/trade indicators + partners (fills in the rest)
-  const [supp, partners] = await Promise.all([fetchCountrySupp(iso3), partnersPromise]);
+  // Phase 2: 6 sector/trade indicators + partners + goods (fills in the rest)
+  const [supp, partners, goods] = await Promise.all([fetchCountrySupp(iso3), partnersPromise, goodsPromise]);
   if (_openIso3 !== iso3) return;
   const detail = { ...core, ...supp };
   setCachedCountryDetail(iso3, detail);
-  renderDetailPanel(detailPanel, countryData, detail, partners);
+  renderDetailPanel(detailPanel, countryData, detail, partners, goods);
 }
 
 function closeDetail() {
