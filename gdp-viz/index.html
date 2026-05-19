@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Real GDP by Country — World Bank</title>
+  <link rel="stylesheet" href="styles/main.css" />
+</head>
+<body>
+  <div id="app">
+
+    <div id="top-bar">
+      <header>
+        <h1>Real GDP by Country &amp; Region</h1>
+        <p class="subtitle" id="subtitle">Loading data from World Bank…</p>
+      </header>
+
+      <!-- Continent legend chips + back button -->
+      <div id="controls">
+        <button id="back-btn" class="hidden">← World View</button>
+        <div id="legend-bar"></div>
+      </div>
+    </div>
+
+    <!-- Main view: chart + detail panel side-by-side -->
+    <div id="main-view">
+
+      <!-- Chart -->
+      <div id="chart-container">
+        <div id="status">
+          <div class="spinner"></div>
+          <p id="status-message">Connecting to World Bank API…</p>
+        </div>
+        <svg
+          id="chart-svg"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-label="GDP bubble chart by country and region"
+          role="img"
+        ></svg>
+      </div>
+
+      <!-- Country detail panel (slides in from right on country click) -->
+      <aside id="detail-panel" aria-label="Country GDP detail">
+        <button id="close-panel" aria-label="Close detail panel">✕</button>
+        <div id="detail-content"></div>
+      </aside>
+
+    </div>
+
+    <footer>
+      Data: World Bank Open Data · Indicator NY.GDP.MKTP.KD (constant 2015 USD) ·
+      <a href="https://data.worldbank.org" target="_blank" rel="noopener">data.worldbank.org</a>
+      · Bubble size ∝ GDP · Click a continent bubble or chip to zoom · Click a country for details
+    </footer>
+
+  </div>
+
+  <div id="tooltip" aria-hidden="true"></div>
+
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>
