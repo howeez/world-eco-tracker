@@ -10,7 +10,8 @@ import {
   formatCompact,
   formatTrillions,
   fetchSectorDetail,
-  fetchBilateralHistory,
+  fetchBilateralHistoryComtrade,
+  fetchBilateralHistoryOTS,
   fetchBilateralGoods,
   isoToOEC,
 } from "./worldbank.js";
@@ -359,7 +360,6 @@ function initSectorDrilldown(content, iso3) {
           const wrap = expand.querySelector(".sector-history-wrap");
           if (wrap) buildSparkline(wrap, fetched.history, SECTOR_COLORS[sector], {
             formatY: v => `${v.toFixed(1)}%`,
-            zeroBased: false,
           });
         }
       })
@@ -461,6 +461,14 @@ function initTradeInteractivity(content, homeCountry, panel) {
 
 // ── Bilateral trade view ──────────────────────────────────────────────────────
 
+const _MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function _fmtMonth(yyyymm) {
+  if (!yyyymm || yyyymm.length < 6) return null;
+  const m = parseInt(yyyymm.slice(4, 6), 10);
+  const y = yyyymm.slice(0, 4);
+  return `${_MONTH_NAMES[m - 1] ?? ""} ${y}`;
+}
+
 function showBilateralView(panel, homeCountry, partnerName, partnerOecCode) {
   const content = panel.querySelector("#detail-content");
 
@@ -486,7 +494,8 @@ function showBilateralView(panel, homeCountry, partnerName, partnerOecCode) {
   });
 
   Promise.all([
-    fetchBilateralHistory(homeCountry.iso3, partnerOecCode),
+    fetchBilateralHistoryComtrade(homeCountry.iso3, partnerIso3)
+      .then(r => r ?? fetchBilateralHistoryOTS(homeCountry.iso3, partnerIso3)),
     fetchBilateralGoods(homeCountry.iso3, partnerOecCode),
   ]).then(([histData, goodsData]) => {
       const loadEl = content.querySelector(".bilateral-loading");
@@ -499,8 +508,11 @@ function showBilateralView(panel, homeCountry, partnerName, partnerOecCode) {
 
       const allDates  = [...(histData?.exports ?? []), ...(histData?.imports ?? [])].map(d => +d.date);
       const yearRange = allDates.length ? `${Math.min(...allDates)}–${Math.max(...allDates)}` : null;
+      const throughStr = histData?.lastPeriod ? ` · through ${_fmtMonth(histData.lastPeriod)}` : "";
       const subtitleEl = content.querySelector(".bilateral-subtitle");
-      if (subtitleEl && yearRange) subtitleEl.textContent = `Merchandise trade · ${yearRange} · BACI`;
+      if (subtitleEl && yearRange) {
+        subtitleEl.textContent = `Merchandise trade · ${yearRange}${throughStr} · UN Comtrade`;
+      }
 
       const latestExp = histData?.exports?.[histData.exports.length - 1];
       const latestImp = histData?.imports?.[histData.imports.length - 1];
@@ -555,7 +567,7 @@ function showBilateralView(panel, homeCountry, partnerName, partnerOecCode) {
           </summary>
           <div class="trade-accordion-body">${impGoodsHtml}</div>
         </details>` : ""}
-        <div class="sub-note" style="margin-top:0.5rem">OEC · BACI</div>`;
+        <div class="sub-note" style="margin-top:0.5rem">Trade history: UN Comtrade &nbsp;·&nbsp; Goods breakdown: OEC · BACI</div>`;
 
       const chartEl = content.querySelector(".bilateral-chart");
       if (chartEl && histData) buildBilateralSparkline(chartEl, histData);
@@ -704,3 +716,4 @@ function fmtPop(n) {
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
   return `${(n / 1e3).toFixed(0)}K`;
 }
+

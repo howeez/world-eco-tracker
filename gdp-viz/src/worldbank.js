@@ -446,6 +446,119 @@ function _oecTopGoods(rows, n = 10) {
 
 export function isoToOEC(iso3) { return _isoToOEC(iso3); }
 
+// ── UN Comtrade proxy (Cloudflare Worker) ─────────────────────────────────────
+// Annual 2000–2024 + monthly 2025–present (~2 month lag).
+// Worker batches the Comtrade requests server-side; browser makes one call.
+
+const COMTRADE_PROXY = "https://imf-dots-proxy.ezrahowe3883.workers.dev/comtrade/bilateral";
+
+// ISO3 → UN M49 numeric reporter/partner codes
+const _M49 = {
+  // Africa
+  "DZA":12,  "AGO":24,  "BEN":204, "BWA":72,  "BFA":854, "BDI":108, "CMR":120, "CPV":132,
+  "CAF":140, "TCD":148, "COM":174, "COD":180, "COG":178, "CIV":384, "DJI":262, "EGY":818,
+  "GNQ":226, "ERI":232, "ETH":231, "GAB":266, "GMB":270, "GHA":288, "GIN":324, "GNB":624,
+  "KEN":404, "LSO":426, "LBR":430, "LBY":434, "MDG":450, "MWI":454, "MLI":466, "MRT":478,
+  "MUS":480, "MAR":504, "MOZ":508, "NAM":516, "NER":562, "NGA":566, "RWA":646, "STP":678,
+  "SEN":686, "SLE":694, "SOM":706, "ZAF":710, "SSD":728, "SDN":729, "SWZ":748, "TZA":834,
+  "TGO":768, "TUN":788, "UGA":800, "ZMB":894, "ZWE":716, "SYC":690,
+  // Asia
+  "AFG":4,   "BGD":50,  "BTN":64,  "BRN":96,  "KHM":116, "CHN":156, "IND":699, "IDN":360,
+  "JPN":392, "KAZ":398, "KOR":410, "KGZ":417, "LAO":418, "MYS":458, "MDV":462, "MNG":496,
+  "MMR":104, "NPL":524, "PAK":586, "PHL":608, "SGP":702, "LKA":144, "TJK":762, "THA":764,
+  "TLS":626, "TKM":795, "UZB":860, "VNM":704,
+  // Europe
+  "ALB":8,   "AND":20,  "AUT":40,  "BLR":112, "BEL":56,  "BIH":70,  "BGR":100, "HRV":191,
+  "CYP":196, "CZE":203, "DNK":208, "EST":233, "FIN":246, "FRA":251, "DEU":276, "GRC":300,
+  "HUN":348, "ISL":352, "IRL":372, "ITA":380, "LVA":428, "LIE":438, "LTU":440, "LUX":442,
+  "MLT":470, "MDA":498, "MCO":492, "MNE":499, "NLD":528, "MKD":807, "NOR":579, "POL":616,
+  "PRT":620, "ROU":642, "RUS":643, "SMR":674, "SRB":688, "SVK":703, "SVN":705, "ESP":724,
+  "SWE":752, "CHE":757, "UKR":804, "GBR":826,
+  // North America
+  "ATG":28,  "BHS":44,  "BRB":52,  "BLZ":84,  "CAN":124, "CRI":188, "CUB":192, "DMA":212,
+  "DOM":214, "SLV":222, "GRD":308, "GTM":320, "HTI":332, "HND":340, "JAM":388, "MEX":484,
+  "NIC":558, "PAN":591, "KNA":659, "LCA":662, "VCT":670, "TTO":780, "USA":842,
+  // South America
+  "ARG":32,  "BOL":68,  "BRA":76,  "CHL":152, "COL":170, "ECU":218, "GUY":328, "PRY":600,
+  "PER":604, "SUR":740, "URY":858, "VEN":862,
+  // Middle East
+  "BHR":48,  "IRN":364, "IRQ":368, "ISR":376, "JOR":400, "KWT":414, "LBN":422, "OMN":512,
+  "QAT":634, "SAU":682, "SYR":760, "TUR":792, "ARE":784, "YEM":887, "PSE":275,
+  // Oceania
+  "AUS":36,  "FJI":242, "KIR":296, "FSM":583, "NRU":520, "NZL":554, "PLW":585, "PNG":598,
+  "WSM":882, "SLB":90,  "TON":776, "TUV":798, "VUT":548,
+};
+
+/**
+ * Fetch bilateral merchandise trade history via UN Comtrade (annual 2000–2024,
+ * monthly 2025–present, ~2 month lag).
+ * Returns { exports, imports, lastPeriod } where values are in USD, or null.
+ */
+export async function fetchBilateralHistoryComtrade(homeIso3, partnerIso3) {
+  if (!homeIso3 || !partnerIso3) return null;
+  const homeM49    = _M49[homeIso3];
+  const partnerM49 = _M49[partnerIso3];
+  if (!homeM49 || !partnerM49) return null;
+
+  const cacheKey = `gdpviz_comtrade_v2_${homeIso3}_${partnerIso3}`;
+  const cached = _cacheGet(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const res = await fetch(
+      `${COMTRADE_PROXY}?r=${homeM49}&p=${partnerM49}`,
+      { signal: AbortSignal.timeout(30000) }
+    );
+    if (!res.ok) throw new Error(`Comtrade proxy ${res.status}`);
+    const body = await res.json();
+    const rows = body.data ?? [];
+    if (!rows.length) return null;
+
+    const exports    = rows.filter(d => d.exports != null).map(d => ({ date: String(d.year), value: d.exports }));
+    const imports    = rows.filter(d => d.imports != null).map(d => ({ date: String(d.year), value: d.imports }));
+    const lastPeriod = body.lastPeriod ?? null;
+
+    const result = { exports, imports, lastPeriod };
+    _cacheSet(cacheKey, result);
+    return result;
+  } catch (err) {
+    console.warn("Comtrade proxy failed:", err);
+    return null;
+  }
+}
+
+// Keep OTS proxy as fallback for countries not in M49 map
+const OTS_PROXY = "https://imf-dots-proxy.ezrahowe3883.workers.dev/ots/bilateral";
+
+export async function fetchBilateralHistoryOTS(homeIso3, partnerIso3) {
+  if (!homeIso3 || !partnerIso3) return null;
+  const cacheKey = `gdpviz_ots_v1_${homeIso3}_${partnerIso3}`;
+  const cached = _cacheGet(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const endYear = new Date().getFullYear() - 1;
+    const res = await fetch(
+      `${OTS_PROXY}?r=${homeIso3.toLowerCase()}&p=${partnerIso3.toLowerCase()}&startYear=1990&endYear=${endYear}`,
+      { signal: AbortSignal.timeout(30000) }
+    );
+    if (!res.ok) throw new Error(`OTS proxy ${res.status}`);
+    const rows = await res.json();
+    if (!Array.isArray(rows) || !rows.length) return null;
+
+    const result = {
+      exports:    rows.filter(d => d.exports != null).map(d => ({ date: String(d.year), value: d.exports })),
+      imports:    rows.filter(d => d.imports != null).map(d => ({ date: String(d.year), value: d.imports })),
+      lastPeriod: null,
+    };
+    _cacheSet(cacheKey, result);
+    return result;
+  } catch (err) {
+    console.warn("OTS proxy failed:", err);
+    return null;
+  }
+}
+
 /**
  * Fetch top traded goods (HS2 chapter) between two specific countries.
  * Returns { exports: [{name, value, share}], imports: [...], year } or null.
@@ -453,30 +566,34 @@ export function isoToOEC(iso3) { return _isoToOEC(iso3); }
  * filter home country via include=, client-side filter to partner.
  */
 export async function fetchBilateralGoods(homeIso3, partnerOecCode) {
-  const cacheKey = `gdpviz_bilgoods_v1_${homeIso3}_${partnerOecCode}`;
+  const cacheKey = `gdpviz_bilgoods_v3_${homeIso3}_${partnerOecCode}`;
   const cached = _cacheGet(cacheKey);
   if (cached) return cached;
 
   const homeCode = _isoToOEC(homeIso3);
   if (!homeCode || !partnerOecCode) return null;
 
-  for (const year of [2023, 2022, 2021]) {
+  for (const year of [2025, 2024, 2023, 2022, 2021]) {
     try {
+      // Both include= filters are on dimensions that ARE in drilldowns, so they
+      // narrow the response to exactly this bilateral pair — no client-side filter needed.
       const [expJson, impJson] = await Promise.all([
         _oecGet(
           `${OEC_BASE}/data.jsonrecords?cube=trade_i_baci_a_22` +
           `&drilldowns=HS2,Importer+Country&measures=Trade+Value` +
-          `&include=Exporter+Country:${homeCode}&Year=${year}&limit=5000`
+          `&include=Exporter+Country:${homeCode}&include=Importer+Country:${partnerOecCode}` +
+          `&Year=${year}&limit=5000`
         ),
         _oecGet(
           `${OEC_BASE}/data.jsonrecords?cube=trade_i_baci_a_22` +
           `&drilldowns=HS2,Exporter+Country&measures=Trade+Value` +
-          `&include=Importer+Country:${homeCode}&Year=${year}&limit=5000`
+          `&include=Importer+Country:${homeCode}&include=Exporter+Country:${partnerOecCode}` +
+          `&Year=${year}&limit=5000`
         ),
       ]);
 
       function _parseBilGoods(json, partnerIdField) {
-        const rows = (json?.data ?? []).filter(d => d[partnerIdField] === partnerOecCode && d["Trade Value"] != null);
+        const rows = (json?.data ?? []).filter(d => d[partnerIdField] != null && d["Trade Value"] != null);
         if (!rows.length) return [];
         const nameField = Object.keys(rows[0]).find(k =>
           typeof rows[0][k] === "string" && !k.endsWith(" ID") && !k.includes("Country") && k !== "Year"
