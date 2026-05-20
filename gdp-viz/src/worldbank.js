@@ -65,7 +65,7 @@ export const CONTINENT_MAP = {
   "KOR":"Asia","KGZ":"Asia","LAO":"Asia","MYS":"Asia","MDV":"Asia",
   "MNG":"Asia","MMR":"Asia","NPL":"Asia","PAK":"Asia","PHL":"Asia",
   "SGP":"Asia","LKA":"Asia","TJK":"Asia","THA":"Asia","TLS":"Asia",
-  "TKM":"Asia","UZB":"Asia","VNM":"Asia",
+  "TKM":"Asia","UZB":"Asia","VNM":"Asia","TWN":"Asia",
 
   // Europe
   "ALB":"Europe","AND":"Europe","AUT":"Europe","BLR":"Europe","BEL":"Europe",
@@ -152,16 +152,19 @@ export function flagEmoji(iso2) {
 export function formatTrillions(usd) {
   const abs = Math.abs(usd);
   if (abs >= 1e12) return `$${(usd / 1e12).toFixed(2)}T`;
-  if (abs >= 1e9)  return `$${(usd / 1e9).toFixed(1)}B`;
-  if (abs >= 1e6)  return `$${(usd / 1e6).toFixed(1)}M`;
-  return `$${usd.toLocaleString()}`;
+  if (abs >= 1e9)  return `$${(usd / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6)  return `$${(usd / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3)  return `$${(usd / 1e3).toFixed(2)}K`;
+  return `$${usd.toFixed(2)}`;
 }
 
 export function formatCompact(usd) {
   const abs = Math.abs(usd);
   if (abs >= 1e12) return `$${(usd / 1e12).toFixed(1)}T`;
-  if (abs >= 1e9)  return `$${(usd / 1e9).toFixed(0)}B`;
-  return `$${(usd / 1e6).toFixed(0)}M`;
+  if (abs >= 1e9)  return `$${(usd / 1e9).toFixed(1)}B`;
+  if (abs >= 1e6)  return `$${(usd / 1e6).toFixed(1)}M`;
+  if (abs >= 1e3)  return `$${(usd / 1e3).toFixed(0)}K`;
+  return `$${usd.toFixed(0)}`;
 }
 
 async function fetchPage(url) {
@@ -172,12 +175,83 @@ async function fetchPage(url) {
   return json; // [meta, data]
 }
 
+// ── Taiwan (IMF DataMapper) ───────────────────────────────────────────────────
+// Taiwan is excluded from the World Bank API; we source it from the IMF instead.
+
+const IMF_DM_BASE = "https://www.imf.org/external/datamapper/api/v1";
+// Taiwan's 2015 nominal GDP in USD — anchor for converting IMF real GDP to constant 2015 USD
+const _TWN_2015_USD = 524.02e9;
+
+async function _fetchTaiwanIMF() {
+  const cacheKey = "gdpviz_twn_imf_v2";
+  const cached = _cacheGet(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const [nominalRes, growthRes, pcRes, popRes] = await Promise.all([
+      fetch(`${IMF_DM_BASE}/NGDPD/TWN`).then(r => r.json()),    // nominal GDP, USD billions
+      fetch(`${IMF_DM_BASE}/NGDP_RPCH/TWN`).then(r => r.json()), // real GDP growth %
+      fetch(`${IMF_DM_BASE}/NGDPDPC/TWN`).then(r => r.json()),   // GDP per capita, current USD
+      fetch(`${IMF_DM_BASE}/LP/TWN`).then(r => r.json()),        // population, millions
+    ]);
+
+    const nominal = nominalRes.values?.NGDPD?.TWN    ?? {};
+    const growth  = growthRes.values?.NGDP_RPCH?.TWN ?? {};
+    const gdpPC   = pcRes.values?.NGDPDPC?.TWN       ?? {};
+    const pop     = popRes.values?.LP?.TWN            ?? {};
+
+    // Build constant 2015 USD series: anchor on nominal 2015, propagate via real growth rates
+    const anchor2015 = (nominal["2015"] ?? _TWN_2015_USD / 1e9) * 1e9;
+    const constUSD = { "2015": anchor2015 };
+    const nowYear  = new Date().getFullYear();
+    for (let y = 2016; y <= nowYear; y++) {
+      const g = growth[String(y)];
+      if (g == null || constUSD[String(y - 1)] == null) break;
+      constUSD[String(y)] = constUSD[String(y - 1)] * (1 + g / 100);
+    }
+    for (let y = 2014; y >= 1980; y--) {
+      const g = growth[String(y + 1)];
+      if (g == null || constUSD[String(y + 1)] == null) break;
+      constUSD[String(y)] = constUSD[String(y + 1)] / (1 + g / 100);
+    }
+
+    const latestOf = obj => Object.keys(obj).sort().reverse().find(y => obj[y] != null && +y <= nowYear);
+
+    const gdpYear  = latestOf(constUSD);
+    const growYear = latestOf(growth);
+    const pcYear   = latestOf(gdpPC);
+    const popYear  = latestOf(pop);
+
+    const history = Object.keys(constUSD).sort()
+      .filter(y => constUSD[y] != null && +y >= 1990 && +y <= nowYear)
+      .map(y => ({ date: y, value: constUSD[y] }));
+
+    const result = {
+      gdp:              gdpYear  ? constUSD[gdpYear]  : null,
+      gdpYear,
+      gdpGrowth:        growYear ? growth[growYear]    : null,
+      gdpGrowthYear:    growYear,
+      gdpPerCapita:     pcYear   ? gdpPC[pcYear] * 1000 : null,
+      gdpPerCapitaYear: pcYear,
+      population:       popYear  ? pop[popYear] * 1e6   : null,
+      populationYear:   popYear,
+      history,
+    };
+
+    _cacheSet(cacheKey, result);
+    return result;
+  } catch (err) {
+    console.warn("Taiwan IMF fetch failed:", err);
+    return null;
+  }
+}
+
 /**
  * Fetch the most-recent GDP for every country (one or two pages).
  * Returns { continents, worldTotal, year }
  */
 export async function fetchWorldGDP() {
-  const cached = _cacheGet("gdpviz_world");
+  const cached = _cacheGet("gdpviz_world_v2");
   if (cached) return cached;
 
   const base = `${WB_BASE}/country/all/indicator/${GDP_INDICATOR}?format=json&mrv=1&per_page=300`;
@@ -211,6 +285,12 @@ export async function fetchWorldGDP() {
     }
   }
 
+  // Taiwan is absent from the World Bank — inject from IMF
+  const twn = await _fetchTaiwanIMF();
+  if (twn?.gdp) {
+    gdpByISO3["TWN"] = { iso3: "TWN", iso2: "TW", name: "Taiwan", gdp: twn.gdp, year: twn.gdpYear };
+  }
+
   // Group by continent
   const byContinent = {};
   for (const entry of Object.values(gdpByISO3)) {
@@ -235,7 +315,7 @@ export async function fetchWorldGDP() {
   const year = Object.values(gdpByISO3)[0]?.year ?? "N/A";
 
   const result = { continents, worldTotal, year };
-  _cacheSet("gdpviz_world", result);
+  _cacheSet("gdpviz_world_v2", result);
   return result;
 }
 
@@ -466,7 +546,7 @@ const _M49 = {
   "AFG":4,   "BGD":50,  "BTN":64,  "BRN":96,  "KHM":116, "CHN":156, "IND":699, "IDN":360,
   "JPN":392, "KAZ":398, "KOR":410, "KGZ":417, "LAO":418, "MYS":458, "MDV":462, "MNG":496,
   "MMR":104, "NPL":524, "PAK":586, "PHL":608, "SGP":702, "LKA":144, "TJK":762, "THA":764,
-  "TLS":626, "TKM":795, "UZB":860, "VNM":704,
+  "TLS":626, "TKM":795, "UZB":860, "VNM":704, "TWN":490,
   // Europe
   "ALB":8,   "AND":20,  "AUT":40,  "BLR":112, "BEL":56,  "BIH":70,  "BGR":100, "HRV":191,
   "CYP":196, "CZE":203, "DNK":208, "EST":233, "FIN":246, "FRA":251, "DEU":276, "GRC":300,
@@ -725,6 +805,20 @@ async function _fetchIndicatorBatch(iso3, indicators) {
 
 /** Phase 1 — stats shown immediately (3 indicators + sparkline history). */
 export async function fetchCountryCore(iso3) {
+  if (iso3 === "TWN") {
+    const twn = await _fetchTaiwanIMF();
+    if (!twn) return { history: [] };
+    return {
+      gdpGrowth:        twn.gdpGrowth,
+      gdpGrowthYear:    twn.gdpGrowthYear,
+      gdpPerCapita:     twn.gdpPerCapita,
+      gdpPerCapitaYear: twn.gdpPerCapitaYear,
+      population:       twn.population,
+      populationYear:   twn.populationYear,
+      history:          twn.history,
+    };
+  }
+
   const [stats, histRows] = await Promise.all([
     _fetchIndicatorBatch(iso3, {
       gdpPerCapita: "NY.GDP.PCAP.KD",
